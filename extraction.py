@@ -12,7 +12,7 @@ from pprint import pprint
 import sys
 import torch
 import zlib
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from transformers import BertTokenizer, GPT2LMHeadModel, TextGenerationPipeline
 from tqdm import tqdm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -86,13 +86,13 @@ def main():
     top_k = 40
 
     print("Loading GPT2...")
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    tokenizer = BertTokenizer.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall')
     tokenizer.padding_side = 'left' 
     tokenizer.pad_token = tokenizer.eos_token
 
-    model1 = GPT2LMHeadModel.from_pretrained('gpt2-xl', return_dict=True).to(device)
+    model1 = AutoModelForCausalLM.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.config.pad_token_id = model1.config.eos_token_id
-    model2 = GPT2LMHeadModel.from_pretrained('gpt2', return_dict=True).to(device)
+    model2 = AutoModelForCausalLM.from_pretrained('uer/gpt2-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.eval()
     model2.eval()
     
