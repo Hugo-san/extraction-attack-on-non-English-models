@@ -12,7 +12,7 @@ from pprint import pprint
 import sys
 import torch
 import zlib
-from transformers import BertTokenizer, GPT2LMHeadModel, TextGenerationPipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
