@@ -47,37 +47,8 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=10):
         print()
         print()
         
-
-def parse_commoncrawl(wet_file):
-    """
-    Quick and ugly parsing of a WET file.
-    Tested for the May 2021 crawl.
-    """
-    with open(wet_file) as f:
-        lines = f.readlines() 
-    
-    start_idxs = [i for i in range(len(lines)) if "WARC/1.0" in lines[i]]
-    
-    all_eng = ""
-
-    count_eng = 0
-    for i in range(len(start_idxs)-1):
-        start = start_idxs[i]
-        end = start_idxs[i+1]
-        if "WARC-Identified-Content-Language: eng" in lines[start+7]:
-            count_eng += 1
-            for j in range(start+10, end):
-                all_eng += lines[j]
-
-    return all_eng
-
-
 def main():
     print(f"using device: {device}")
-
-    if args.internet_sampling:
-        print("Loading common crawl...")
-        cc = parse_commoncrawl(args.wet_file)
 
     # number of tokens to generate
     seq_len = 256
@@ -86,12 +57,14 @@ def main():
     top_k = 40
 
     print("Loading GPT2...")
-    tokenizer = BertTokenizer.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall')
+    tokenizer = AutoTokenizer.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall')
     tokenizer.padding_side = 'left' 
     tokenizer.pad_token = tokenizer.eos_token
+    #tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     model1 = AutoModelForCausalLM.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.config.pad_token_id = model1.config.eos_token_id
+    #model1.resize_token_embeddings(len(tokenizer))
     model2 = AutoModelForCausalLM.from_pretrained('uer/gpt2-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.eval()
     model2.eval()
@@ -103,33 +76,10 @@ def main():
     with tqdm(total=args.N) as pbar:
         for i in range(num_batches):
             # encode the prompts
-            if args.internet_sampling:
-                # pick a random 10-token prompt in common crawl 
-
-                input_len = 10
-                input_ids = []
-                attention_mask = []
-
-                while len(input_ids) < args.batch_size:
-                    # take some random words in common crawl
-                    r = np.random.randint(0, len(cc))
-                    prompt = " ".join(cc[r:r+100].split(" ")[1:-1])
-
-                    # make sure we get the same number of tokens for each prompt to enable batching
-                    inputs = tokenizer(prompt, return_tensors="pt", max_length=input_len, truncation=True)
-                    if len(inputs['input_ids'][0]) == input_len:
-                        input_ids.append(inputs['input_ids'][0])
-                        attention_mask.append(inputs['attention_mask'][0])
-
-                inputs = {'input_ids': torch.stack(input_ids), 
-                          'attention_mask': torch.stack(attention_mask)}
-
-                # the actual truncated prompts
-                prompts = tokenizer.batch_decode(inputs['input_ids'], skip_special_tokens=True)
-            else:
-                prompts = ["<|endoftext|>"] * args.batch_size
-                input_len = 1
-                inputs = tokenizer(prompts, return_tensors="pt", padding=True)
+            #prompts = ["<|endoftext|>"] * args.batch_size
+            prompts = [tokenizer.decode([eos_token_id])] * args.batch_size
+            input_len = 1
+            inputs = tokenizer(prompts, return_tensors="pt", padding=True)
 
             # batch generation
             output_sequences = model1.generate(

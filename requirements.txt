@@ -2,4 +2,5 @@ numpy
 pandas
 torch
 tqdm
-transformers==4.36.0
+transformers
+beautifulsoup4
