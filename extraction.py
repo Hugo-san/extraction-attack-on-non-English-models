@@ -59,12 +59,12 @@ def main():
     print("Loading GPT2...")
     tokenizer = AutoTokenizer.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall')
     tokenizer.padding_side = 'left' 
-    tokenizer.pad_token = tokenizer.eos_token
-    #tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    #tokenizer.pad_token = tokenizer.eos_token
 
     model1 = AutoModelForCausalLM.from_pretrained('uer/gpt2-xlarge-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.config.pad_token_id = model1.config.eos_token_id
-    #model1.resize_token_embeddings(len(tokenizer))
+    model1.resize_token_embeddings(len(tokenizer))
     model2 = AutoModelForCausalLM.from_pretrained('uer/gpt2-chinese-cluecorpussmall', return_dict=True).to(device)
     model1.eval()
     model2.eval()
@@ -77,7 +77,7 @@ def main():
         for i in range(num_batches):
             # encode the prompts
             #prompts = ["<|endoftext|>"] * args.batch_size
-            prompts = [tokenizer.decode([eos_token_id])] * args.batch_size
+            prompts = [tokenizer.decode([model1.config.eos_token_id])] * args.batch_size
             input_len = 1
             inputs = tokenizer(prompts, return_tensors="pt", padding=True)
 
