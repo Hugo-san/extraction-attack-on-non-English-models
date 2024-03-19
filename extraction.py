@@ -37,7 +37,6 @@ def calculate_window_perplexity(input_sentence, model, tokenizer, window_size=50
     for idx in range(0, input_ids.size(1) - window_size,16):
         window_ids = input_ids[:, idx : idx + window_size]
         
-        # 转换为字符串检查是否有大量重复字符
         window_text = tokenizer.decode(window_ids[0])
         if has_repeated_chars(window_text, threshold=0.4):
             continue
@@ -54,7 +53,6 @@ def calculate_window_perplexity(input_sentence, model, tokenizer, window_size=50
     return np.inf if not ppls else min(ppls)
 
 def has_repeated_chars(window_text, threshold=0.4):
-    """检查文本窗口中是否有任何字符超过了指定的重复次数阈值"""
     from collections import Counter
     counts = Counter(window_text)
     most_common_cnt = counts.most_common(1)[0][1]
@@ -62,7 +60,7 @@ def has_repeated_chars(window_text, threshold=0.4):
         return True
     return False
 
-def print_best(metric, samples, name1, scores1, name2, scores2, n, file):
+def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
     """
     print the `n` best samples according to the given `metric`
     """
@@ -70,14 +68,16 @@ def print_best(metric, samples, name1, scores1, name2, scores2, n, file):
 
     for i, idx in enumerate(idxs):
         if scores2 is not None:
-            file.write(f"{i+1}: {name1}={scores1[idx]:.3f}, {name2}={scores2[idx]:.3f}, score={metric[idx]:.3f}\n")
+            print(f"{i+1}: {name1}={scores1[idx]:.3f}, {name2}={scores2[idx]:.3f}, score={metric[idx]:.3f}")
         else:
-            file.write(f"{i+1}: {name1}={scores1[idx]:.3f}, score={metric[idx]:.3f}\n")
+            print(f"{i+1}: {name1}={scores1[idx]:.3f}, , score={metric[idx]:.3f}")
 
-        file.write("\n")
-        pprint(samples[idx], stream=file)
-        file.write("\n\n")
-
+        print()
+        #for line in samples[idx].split("\n"):
+        #    print(f"\t {line.rstrip()}")
+        pprint(samples[idx])
+        print()
+        print()
         
 def main():
     print(f"using device: {device}")
@@ -165,27 +165,31 @@ def main():
     assert len(scores["S"]) == len(scores["XL"])
     print("Num duplicates:", len(samples) - len(generated_samples_clean))
 
-    with open('output.txt', 'w') as file:
-        # Sort by perplexity
-        metric = -np.log(scores["XL"])
-        print(f"======== top sample by XL perplexity: ========\n", file=file)
-        print_best(metric, generated_samples_clean, "PPL", scores["XL"], "PPL-S", scores["S"], 20, file)
+ # Sort by perplexity
+    metric = -np.log(scores["XL"])
+    print(f"======== top sample by XL perplexity: ========")
+    print_best(metric, generated_samples_clean, "PPL", scores["XL"])
+    print()
+    print()
 
-        # Sort by ratio of log perplexities of S and XL models
-        metric = np.log(scores["S"]) / np.log(scores["XL"])
-        print(f"======== top sample by ratio of S and XL perplexities: ========\n", file=file)
-        print_best(metric, generated_samples_clean, "PPL-S", scores["S"], "PPL-XL", scores["XL"], 20, file)
+    # Sort by ratio of log perplexities of S and XL models
+    metric = np.log(scores["S"]) / np.log(scores["XL"])
+    print(f"======== top sample by ratio of S and XL perplexities: ========")
+    print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"])
+    print()
+    print()
 
-        # Sort by sliding window perplexities
-        metric = -np.log(scores["Sliding_window"])
-        print(f"======== top sample by sliding window perplexities: ========\n", file=file)
-        print_best(metric, generated_samples_clean, "PPL-XL-Sliding-window", scores["Sliding_window"], None, None, 20, file)
+    # Sort by sliding window perplexities 
+    metric = -np.log(scores["Sliding_window"])
+    print(f"======== top sample by sliding window perplexities: ========")
+    print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"])
+    print()
+    print()
 
-        # Sort by ratio of Zlib entropy and XL perplexity
-        metric = scores["zlib"] / np.log(scores["XL"])
-        print(f"======== top sample by ratio of Zlib entropy and XL perplexity: ========\n", file=file)
-        print_best(metric, generated_samples_clean, "Zlib", scores["zlib"], "PPL-XL", scores["XL"], 20, file)
-
+    # Sort by ratio of Zlib entropy and XL perplexity
+    metric = scores["zlib"] / np.log(scores["XL"])
+    print(f"======== top sample by ratio of Zlib entropy and XL perplexity: ========")
+    print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"])
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
