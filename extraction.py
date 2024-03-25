@@ -17,13 +17,11 @@ from tqdm import tqdm
 import pandas as pd
 import json
 from bs4 import BeautifulSoup
-
+import pysubstringsearch
+import pandas as pd
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-json_data_web = load_data(json_file, 'web_text_zh_train')
-json_data_news = load_data(json_file, 'news2016zh_train')
-json_data_baike = load_data(json_file, 'baike_qa_train')
 print("verification dataset loaded")
 
 def calculatePerplexity(sentence, model, tokenizer):
@@ -66,6 +64,7 @@ def calculate_window_perplexity(input_sentence, model, tokenizer, window_size=50
         ppls.append(ppl)
     # When ppls is empty, return np.inf and a placeholder text indicating no valid window was found.
     special_text = "[NO VALID WINDOW FOUND]" * (window_size // len("[NO VALID WINDOW FOUND]"))
+    min_ppl_window_text = min_ppl_window_text.replace('[CLS]', '').strip()
     return min_ppl, min_ppl_window_text if ppls else (np.inf, special_text)
 
 def has_repeated_chars(window_text, threshold=0.4):
@@ -82,60 +81,48 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
     """
     idxs = np.argsort(metric)[::-1][:n]
     precision_count = 0
-    for i, idx in enumerate(idxs):
+    data_to_save = []
+
+    for i, idx in enumerate(tqdm(idxs, desc='Processing samples')):
+
+        occ = check_partial_match(samples[idx])
         if scores2 is not None:
             print(f"{i+1}: {name1}={scores1[idx]:.3f}, {name2}={scores2[idx]:.3f}, score={metric[idx]:.3f}")
+            data_to_save.append({
+            "Sample": samples[idx],
+            name1: scores1[idx],
+            name2: scores2[idx],
+            "Metric": metric[idx],
+            "Occurence":occ
+            })
         else:
-            print(f"{i+1}: {name1}={scores1[idx]:.3f}, , score={metric[idx]:.3f}")
+            print(f"{i+1}: {name1}={scores1[idx]:.3f}, score={metric[idx]:.3f}")
+            data_to_save.append({
+            "Sample": samples[idx],
+            name1: scores1[idx],
+            "Metric": metric[idx],
+            "Occurence":occ
+            })
 
-        print()
         pprint(samples[idx])
-        occ =  verify_samples(samples[idx])
         print(f"The occurence of this generated sample is :{occ}")
         if occ > 0:
-            precision_count = precision_count+1
-        print()
-        print()
+            precision_count += 1
+
+        print("\n") 
     
-    precision = precision_count/n
+    precision = precision_count / n
     print(f"The precision by this metric is :{precision:.2f}, out of {n} best samples, {precision_count} of them are memorized.")
+    return data_to_save
 
-def load_data(json_file, data_type):
-
-    data = []
-    with open(json_file, 'r', encoding='utf-8') as file:
-        for line in file:
-            data.append(json.loads(line.strip()))
-    
-    return data
-
-def check_partial_match(output_text, data_type):
+def check_partial_match(output_text):
     occurence = 0
-
-    if data_type == 'web_text_zh_train':
-            dataset = json_data_web
-        elif data_type == 'news2016zh_train':
-            dataset = json_data_news
-        elif data_type == 'Bbaike_qa_train':
-            dataset = json_data_baike
     
-    for item in dataset:
-        merged_text = ''
-        if data_type == 'web_text_zh_train':
-            merged_text = ' '.join([item.get('title', ''), item.get('desc', ''), item.get('topic', ''),item.get('star', '')item.get('content', '')])
-        elif data_type == 'news2016zh_train':
-            merged_text = ' '.join([item.get('title', ''), item.get('content', ''),item.get('source', ''),item.get('time', '')])
-        elif data_type == 'Bbaike_qa_train':
-            merged_text = ' '.join([item.get('category', ''), item.get('title', ''), item.get('desc', ''),item.get('answer', '')])
+    output_text_no_space = output_text.replace(" ", "")
+    reader = pysubstringsearch.Reader(index_file_path='sum_index.idx',)
+    results = reader.search(output_text_no_space)
+    occurence += len(results)
 
-        output_text_no_space = output_text.replace(" ", "")
-        merged_text_no_space = merged_text.replace(" ", "")
-        merged_text_clean = remove_html_tags_using_bs4(merged_text_no_space)
-
-        if output_text_no_space in merged_text_clean:
-            print(f'Partial match found in {data_type}: {item.get("qid", item.get("news_id", item.get("id", "")))}')
-            occurence = occurence + 1
-    
     return occurence
 
 def remove_html_tags_using_bs4(html):
@@ -143,15 +130,6 @@ def remove_html_tags_using_bs4(html):
     
     text_only = soup.get_text(separator=" ", strip=True)
     return text_only
-
-def verify_samples(sample):
-    # verification phase:
-    # different types of datasets
-    data_types = ['web_text_zh_train', 'Bbaike_qa_train', 'news2016zh_train']
-    sum_occurence=0
-    for data_type in data_types:
-        sum_occurence = sum_occurence + check_partial_match(sample,data_type)
-    return sum_occurence
 
 def main():
     print(f"using device: {device}")
@@ -251,28 +229,43 @@ def main():
     # Sort by perplexity
     metric = -np.log(scores["XL"])
     print(f"======== top sample by XL perplexity: ========")
-    print_best(metric, generated_samples_clean, "PPL", scores["XL"])
+    XL_result = print_best(metric, generated_samples_clean, "PPL", scores["XL"],n = args.best_n)
+    df_XL = pd.DataFrame(XL_result)
+    csv_filename = 'XL_best_samples_scores.csv'
+    df_XL.to_csv(csv_filename, index=False)
+
     print()
     print()
 
     # Sort by ratio of log perplexities of S and XL models
     metric = np.log(scores["S"]) / np.log(scores["XL"])
     print(f"======== top sample by ratio of S and XL perplexities: ========")
-    print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"])
+    S_XL_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"],args.best_n)
+    df_S_XL = pd.DataFrame(S_XL_result)
+    csv_filename = 'S_XL_best_samples_scores.csv'
+    df_S_XL.to_csv(csv_filename, index=False,encoding='utf-8')
+
     print()
     print()
 
     # Sort by sliding window perplexities 
     metric = -np.log(scores["Sliding_window"])
     print(f"======== top sample by sliding window perplexities: ========")
-    print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"])
+    window_result = print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"],args.best_n)
+    df_window = pd.DataFrame(window_result)
+    csv_filename = 'window_best_samples_scores.csv'
+    df_window.to_csv(csv_filename, index=False,encoding='utf-8')
+    
     print()
     print()
 
     # Sort by ratio of Zlib entropy and XL perplexity
     metric = scores["zlib"] / np.log(scores["XL"])
     print(f"======== top sample by ratio of Zlib entropy and XL perplexity: ========")
-    print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"])
+    zlib_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"],args.best_n)
+    df_zlib = pd.DataFrame(zlib_result)
+    csv_filename = 'zlib_best_samples_scores.csv'
+    df_zlib.to_csv(csv_filename, index=False,encoding='utf-8')
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
@@ -282,7 +275,7 @@ def parse_arguments(argv):
     parser.add_argument('--pretrained_model_name2', type=str, default=None, help="the name of the model for relative perplexity from huggingface")
     parser.add_argument('--window_size', type=int, default=50, help="the size of sliding window")
     parser.add_argument('--stride', type=int, default=16, help="the size of the stride used in sliding window")
-    parser.add_argument('--dataset1', type=str, default=None, help="the dataset used for verification")
+    parser.add_argument('--best_n', type=int, default=20, help="the best n samples")
     return parser.parse_args(argv)
 
 if __name__ == '__main__':
