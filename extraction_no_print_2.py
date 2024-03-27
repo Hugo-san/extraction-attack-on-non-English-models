@@ -75,35 +75,7 @@ def has_repeated_chars(window_text, threshold=0.4):
         return True
     return False
 
-def store_all_samples_to_csv(metric,all_samples,name1,score1,name2=None,scores2=None,N):
-    idxs = np.argsort(metric)[::-1][:N]
-    all_data_to_save = []
-
-    for i, idx in enumerate(tqdm(idxs, desc='Processing samples')):
-
-        occ = -1
-        if scores2 is not None:
-            
-            all_data_to_save.append({
-            "Sample": samples[idx],
-            name1: scores1[idx],
-            name2: scores2[idx],
-            "Metric": metric[idx],
-            "Occurence":occ
-            })
-        else:
-            
-            aLL_data_to_save.append({
-            "Sample": samples[idx],
-            name1: scores1[idx],
-            "Metric": metric[idx],
-            "Occurence":occ
-            })
-
-    return all_data_to_save
-
-
-def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20,totoal_samples=None):
+def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
     """
     print the `n` best samples according to the given `metric`
     """
@@ -113,7 +85,8 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20,t
 
     for i, idx in enumerate(tqdm(idxs, desc='Processing samples')):
 
-        occ = check_partial_match(samples[idx])
+        #occ = check_partial_match(samples[idx])
+        occ = -1
         if scores2 is not None:
             print(f"{i+1}: {name1}={scores1[idx]:.3f}, {name2}={scores2[idx]:.3f}, score={metric[idx]:.3f}")
             data_to_save.append({
@@ -132,19 +105,16 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20,t
             "Occurence":occ
             })
 
-        pprint(samples[idx])
-        print(f"The occurence of this generated sample is :{occ}")
+        #pprint(samples[idx])
+        #print(f"The occurence of this generated sample is :{occ}")
         if occ > 0:
             precision_count += 1
 
-        print("\n") 
+        #print("\n") 
     
     precision = precision_count / n
     print(f"The precision by this metric is :{precision:.2f}, out of {n} best samples, {precision_count} of them are memorized.")
-
-    overall_data = store_all_samples_to_csv(metric,samples,name1,score1,name2,scores2,totoal_samples)
-
-    return data_to_save, overall_data
+    return data_to_save
 
 def check_partial_match(output_text):
     occurence = 0
@@ -166,7 +136,7 @@ def main():
     print(f"using device: {device}")
 
     # number of tokens to generate
-    seq_len = args.text_len
+    seq_len = 256
 
     # sample from the top_k tokens output by the model
     top_k = 40
@@ -237,13 +207,13 @@ def main():
      # a naive de-duplication strategy
     idxs = pd.Index(samples)
     idxs_mask = ~(idxs.duplicated())
-    print(idxs_mask)
+    #print(idxs_mask)
     generated_samples_clean = np.asarray(samples)[idxs_mask]
     generated_samples_clean = generated_samples_clean.tolist()
 
     window_idxs = pd.Index(window_samples)
     window_idxs_mask = ~(window_idxs.duplicated())
-    print(window_idxs_mask)
+    #print(window_idxs_mask)
     # Filter out duplicates while preserving the list structure
     window_generated_samples_clean = [sample for i, sample in enumerate(window_samples) if window_idxs_mask[i]]
 
@@ -260,14 +230,10 @@ def main():
     # Sort by perplexity
     metric = -np.log(scores["XL"])
     print(f"======== top sample by XL perplexity: ========")
-    XL_result, XL_result_overall = print_best(metric, generated_samples_clean, "PPL", scores["XL"],n = args.best_n,args.best_n,args.N)
+    XL_result = print_best(metric, generated_samples_clean, "PPL", scores["XL"],n = args.best_n)
     df_XL = pd.DataFrame(XL_result)
-    csv_filename = f'{args.text_len}_XL_best_samples_scores.csv'
+    csv_filename = 'XL_all_samples_scores_2.csv'
     df_XL.to_csv(csv_filename, index=False)
-
-    df_XL_overall = pd.DataFrame(XL_result_overall)
-    csv_filename = f'{args.text_len}_XL_best_samples_scores_overall.csv'
-    df_XL_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
     print()
     print()
@@ -275,14 +241,10 @@ def main():
     # Sort by ratio of log perplexities of S and XL models
     metric = np.log(scores["S"]) / np.log(scores["XL"])
     print(f"======== top sample by ratio of S and XL perplexities: ========")
-    S_XL_result,S_XL_result_overall = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"],args.best_n,args.N)
+    S_XL_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"],args.best_n)
     df_S_XL = pd.DataFrame(S_XL_result)
-    csv_filename = f'{args.text_len}_S_XL_best_samples_scores.csv'
+    csv_filename = 'S_XL_all_samples_scores_2.csv'
     df_S_XL.to_csv(csv_filename, index=False,encoding='utf-8')
-
-    df_S_XL_overall = pd.DataFrame(S_XL_result_overall)
-    csv_filename = f'{args.text_len}_S_XL_best_samples_scores_overall.csv'
-    df_S_XL_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
     print()
     print()
@@ -290,14 +252,10 @@ def main():
     # Sort by sliding window perplexities 
     metric = -np.log(scores["Sliding_window"])
     print(f"======== top sample by sliding window perplexities: ========")
-    window_result, window_result_overall = print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"],args.best_n,args.N)
+    window_result = print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"],args.best_n)
     df_window = pd.DataFrame(window_result)
-    csv_filename = f'{args.text_len}_window_best_samples_scores.csv'
+    csv_filename = 'window_all_samples_scores_2.csv'
     df_window.to_csv(csv_filename, index=False,encoding='utf-8')
-    
-    df_window_overall = pd.DataFrame(window_result_overall)
-    csv_filename = f'{args.text_len}_window_best_samples_scores_overall.csv'
-    df_window_overall.to_csv(csv_filename, index=False,encoding='utf-8')
     
     print()
     print()
@@ -305,14 +263,10 @@ def main():
     # Sort by ratio of Zlib entropy and XL perplexity
     metric = scores["zlib"] / np.log(scores["XL"])
     print(f"======== top sample by ratio of Zlib entropy and XL perplexity: ========")
-    zlib_result, zlib_result_overall = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"],args.best_n,args.N)
+    zlib_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"],args.best_n)
     df_zlib = pd.DataFrame(zlib_result)
-    csv_filename = f'{args.text_len}_zlib_best_samples_scores.csv'
+    csv_filename = 'zlib_all_samples_scores_2.csv'
     df_zlib.to_csv(csv_filename, index=False,encoding='utf-8')
-
-    df_zlib_overall = pd.DataFrame(zlib_result_overall)
-    csv_filename = f'{args.text_len}_zlib_best_samples_scores_overall.csv'
-    df_zlib_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
@@ -323,8 +277,6 @@ def parse_arguments(argv):
     parser.add_argument('--window_size', type=int, default=50, help="the size of sliding window")
     parser.add_argument('--stride', type=int, default=16, help="the size of the stride used in sliding window")
     parser.add_argument('--best_n', type=int, default=20, help="the best n samples")
-    parser.add_argument('--text_len', type=int, default=256, help="the length of generated samples")
-    
     return parser.parse_args(argv)
 
 if __name__ == '__main__':
