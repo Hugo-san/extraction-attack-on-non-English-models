@@ -2,7 +2,7 @@
 Generate samples with GPT-2 and filter out those that are likely to be
 memorized samples from the training set.
 """
-
+import re
 import logging
 logging.basicConfig(level='ERROR')
 
@@ -65,7 +65,10 @@ def calculate_window_perplexity(input_sentence, model, tokenizer, window_size=50
     # When ppls is empty, return np.inf and a placeholder text indicating no valid window was found.
     special_text = "[NO VALID WINDOW FOUND]" * (window_size // len("[NO VALID WINDOW FOUND]"))
     min_ppl_window_text = min_ppl_window_text.replace('[CLS]', '').strip()
-    return min_ppl, min_ppl_window_text if ppls else (np.inf, special_text)
+    if len(ppls):
+        return min_ppl, min_ppl_window_text
+    else:
+        return np.inf, special_text
 
 def has_repeated_chars(window_text, threshold=0.4):
     from collections import Counter
@@ -75,7 +78,43 @@ def has_repeated_chars(window_text, threshold=0.4):
         return True
     return False
 
-def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
+def store_all_samples_to_csv(metric,all_samples,name1,scores1,name2=None,scores2=None,N=None):
+    idxs = np.argsort(metric)[::-1][:N]
+    all_data_to_save = []
+
+    for i, idx in enumerate(tqdm(idxs, desc='Storing samples')):
+
+        occ = -1
+        personal_information = extract_important_info(all_samples[idx].replace(" ",""))
+        personal_information_all = ""
+        for infor in personal_information:
+            if len(personal_information[infor]) > 0:
+                for line in personal_information[infor]:
+                    personal_information_all += " " +line
+        if scores2 is not None:
+            
+            all_data_to_save.append({
+            "Sample": all_samples[idx],
+            name1: scores1[idx],
+            name2: scores2[idx],
+            "Metric": metric[idx],
+            "Occurence":occ,
+            "Personal_information":personal_information_all
+            })
+        else:
+            
+            all_data_to_save.append({
+            "Sample": all_samples[idx],
+            name1: scores1[idx],
+            "Metric": metric[idx],
+            "Occurence":occ,
+            "Personal_information":personal_information_all
+            })
+
+    return all_data_to_save
+
+
+def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20,totoal_samples=None):
     """
     print the `n` best samples according to the given `metric`
     """
@@ -85,8 +124,19 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
 
     for i, idx in enumerate(tqdm(idxs, desc='Processing samples')):
 
-        #occ = check_partial_match(samples[idx])
-        occ = -1
+        occ = check_partial_match(samples[idx],10)
+
+        personal_information = extract_important_info(samples[idx].replace(" ",""))
+        
+        occ_infor = 0
+        personal_information_all = ""
+        for infor in personal_information:
+            if len(personal_information[infor]) > 0:
+                for line in personal_information[infor]:
+                    occ_infor += check_partial_match(line,0)
+                    personal_information_all += " " +line
+
+
         if scores2 is not None:
             print(f"{i+1}: {name1}={scores1[idx]:.3f}, {name2}={scores2[idx]:.3f}, score={metric[idx]:.3f}")
             data_to_save.append({
@@ -94,7 +144,9 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
             name1: scores1[idx],
             name2: scores2[idx],
             "Metric": metric[idx],
-            "Occurence":occ
+            "Occurence":occ,
+            "Personal_information":personal_information_all,
+            "Personal_information occurrence":occ_infor
             })
         else:
             print(f"{i+1}: {name1}={scores1[idx]:.3f}, score={metric[idx]:.3f}")
@@ -102,41 +154,78 @@ def print_best(metric, samples, name1, scores1, name2=None, scores2=None, n=20):
             "Sample": samples[idx],
             name1: scores1[idx],
             "Metric": metric[idx],
-            "Occurence":occ
+            "Occurence":occ,
+            "Personal_information":personal_information_all,
+            "Personal_information occurrence":occ_infor
             })
 
-        #pprint(samples[idx])
-        #print(f"The occurence of this generated sample is :{occ}")
-        if occ > 0:
+        pprint(samples[idx])
+        print(f"The occurence of this generated sample is :{occ}")
+        pprint(personal_information_all)
+        print(f"The occurence of this extracted information is :{occ_infor}")
+        if occ > 0 or occ_infor >0:
             precision_count += 1
 
-        #print("\n") 
+        print("\n") 
     
     precision = precision_count / n
     print(f"The precision by this metric is :{precision:.2f}, out of {n} best samples, {precision_count} of them are memorized.")
-    return data_to_save
 
-def check_partial_match(output_text):
-    occurence = 0
+    overall_data = store_all_samples_to_csv(metric,samples,name1,scores1,name2,scores2,totoal_samples)
+
+    return data_to_save, overall_data
+
+def extract_important_info(text):
     
+    emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+    
+    phones = re.findall(r'\b1[3-9]\d{9}\b', text)
+    
+    wechats = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]{5,19}\b', text)
+
+    return {
+        "emails": emails,
+        "phones": phones,
+        "wechats": wechats
+    }
+
+def check_partial_match(output_text,mask):
+    occurence = 0
     output_text_no_space = output_text.replace(" ", "")
-    reader = pysubstringsearch.Reader(index_file_path='sum_index.idx',)
-    results = reader.search(output_text_no_space)
+    reader = pysubstringsearch.Reader(index_file_path='sum_index_v3.idx',)
+    results = reader.search(output_text_no_space[mask:])
     occurence += len(results)
 
     return occurence
 
-def remove_html_tags_using_bs4(html):
-    soup = BeautifulSoup(html, "lxml")
-    
-    text_only = soup.get_text(separator=" ", strip=True)
-    return text_only
+def parse_commoncrawl(wet_file):
+    """
+    Quick and ugly parsing of a WET file.
+    Tested for the May 2021 crawl.
+    """
+    with open(wet_file, errors='ignore') as f:
+        lines = f.readlines()
+
+    start_idxs = [i for i in range(len(lines)) if lines[i] == "\n"]
+
+    all_page = []
+    count_page = 0
+    for i in range(len(start_idxs)-1):
+        start = start_idxs[i]
+        end = start_idxs[i+1]
+
+        count_page += 1
+        for j in range(start, end):
+          if lines[j] != "\n":
+            all_page.append(lines[j].replace("\n","").replace('“', '').replace('”', '').replace('‘', '').replace('’', '').replace(' ',''))
+    #print(count_page)
+    return all_page
 
 def main():
     print(f"using device: {device}")
 
     # number of tokens to generate
-    seq_len = 256
+    seq_len = args.text_len
 
     # sample from the top_k tokens output by the model
     top_k = 40
@@ -158,16 +247,36 @@ def main():
     window_samples = []
     scores = {"XL": [], "S": [], "Sliding_window": [], "zlib": []}
 
+    cc_data = parse_commoncrawl(args.wet_file)
+
     num_batches = int(np.ceil(args.N / args.batch_size))
     with tqdm(total=args.N) as pbar:
         for i in range(num_batches):
-            # encode the prompts
-            #prompts = ["<|endoftext|>"] * args.batch-size
-            prompts = [tokenizer.decode([model1.config.eos_token_id])] * args.batch_size
-            input_len = 1
-            inputs = tokenizer(prompts, return_tensors="pt", padding=True)
+            input_len = 15
+            input_ids = []
+            attention_mask = []
 
-            # batch generation
+            while len(input_ids) < args.batch_size:
+                    # take some random words in common crawl
+                    
+                    r1 = np.random.randint(0, len(cc_data))
+                    while len(cc_data[r1]) < 50:
+                        r1 = np.random.randint(0, len(cc_data))
+
+                    prompt = "".join(cc_data[r1][0:50]).replace(" ","")
+
+                    # make sure we get the same number of tokens for each prompt to enable batching
+                    inputs = tokenizer(prompt, return_tensors="pt", max_length=input_len, truncation=True)
+                    if len(inputs['input_ids'][0]) == input_len:
+                        input_ids.append(inputs['input_ids'][0])
+                        attention_mask.append(inputs['attention_mask'][0])
+
+            inputs = {'input_ids': torch.stack(input_ids), 
+                          'attention_mask': torch.stack(attention_mask)}
+
+                # the actual truncated prompts
+            prompts = tokenizer.batch_decode(inputs['input_ids'], skip_special_tokens=True)
+            #pprint(prompts)
             output_sequences = model1.generate(
                 input_ids=inputs['input_ids'].to(device),
                 attention_mask=inputs['attention_mask'].to(device),
@@ -176,10 +285,13 @@ def main():
                 top_k=top_k, 
                 top_p=1.0
             )
-
+            
             texts = tokenizer.batch_decode(output_sequences, skip_special_tokens=True)
 
             for text in texts:
+
+                #text = text[2*len(prompt)+2:]
+
                 # perplexity of GPT2-XL and GPT2-S
                 p1 = calculatePerplexity(text, model1, tokenizer)
                 p2 = calculatePerplexity(text, model2, tokenizer)
@@ -207,13 +319,13 @@ def main():
      # a naive de-duplication strategy
     idxs = pd.Index(samples)
     idxs_mask = ~(idxs.duplicated())
-    #print(idxs_mask)
+    print(idxs_mask)
     generated_samples_clean = np.asarray(samples)[idxs_mask]
     generated_samples_clean = generated_samples_clean.tolist()
 
     window_idxs = pd.Index(window_samples)
     window_idxs_mask = ~(window_idxs.duplicated())
-    #print(window_idxs_mask)
+    print(window_idxs_mask)
     # Filter out duplicates while preserving the list structure
     window_generated_samples_clean = [sample for i, sample in enumerate(window_samples) if window_idxs_mask[i]]
 
@@ -230,10 +342,14 @@ def main():
     # Sort by perplexity
     metric = -np.log(scores["XL"])
     print(f"======== top sample by XL perplexity: ========")
-    XL_result = print_best(metric, generated_samples_clean, "PPL", scores["XL"],n = args.best_n)
+    XL_result, XL_result_overall = print_best(metric, generated_samples_clean, "PPL", scores["XL"],n=args.best_n,totoal_samples=args.N)
     df_XL = pd.DataFrame(XL_result)
-    csv_filename = 'XL_all_samples_scores_2.csv'
+    csv_filename = f'{args.text_len}_XL_best_samples_scores.csv'
     df_XL.to_csv(csv_filename, index=False)
+
+    df_XL_overall = pd.DataFrame(XL_result_overall)
+    csv_filename = f'{args.text_len}_XL_best_samples_scores_overall.csv'
+    df_XL_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
     print()
     print()
@@ -241,10 +357,14 @@ def main():
     # Sort by ratio of log perplexities of S and XL models
     metric = np.log(scores["S"]) / np.log(scores["XL"])
     print(f"======== top sample by ratio of S and XL perplexities: ========")
-    S_XL_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"],args.best_n)
+    S_XL_result,S_XL_result_overall = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "PPL-S", scores["S"],args.best_n,args.N)
     df_S_XL = pd.DataFrame(S_XL_result)
-    csv_filename = 'S_XL_all_samples_scores_2.csv'
+    csv_filename = f'{args.text_len}_S_XL_best_samples_scores.csv'
     df_S_XL.to_csv(csv_filename, index=False,encoding='utf-8')
+
+    df_S_XL_overall = pd.DataFrame(S_XL_result_overall)
+    csv_filename = f'{args.text_len}_S_XL_best_samples_scores_overall.csv'
+    df_S_XL_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
     print()
     print()
@@ -252,10 +372,14 @@ def main():
     # Sort by sliding window perplexities 
     metric = -np.log(scores["Sliding_window"])
     print(f"======== top sample by sliding window perplexities: ========")
-    window_result = print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"],args.best_n)
+    window_result, window_result_overall = print_best(metric, window_generated_samples_clean, "PPL-XL", scores["XL"], "PPL-XL-Sliding-window", scores["Sliding_window"],args.best_n,args.N)
     df_window = pd.DataFrame(window_result)
-    csv_filename = 'window_all_samples_scores_2.csv'
+    csv_filename = f'{args.text_len}_window_best_samples_scores.csv'
     df_window.to_csv(csv_filename, index=False,encoding='utf-8')
+    
+    df_window_overall = pd.DataFrame(window_result_overall)
+    csv_filename = f'{args.text_len}_window_best_samples_scores_overall.csv'
+    df_window_overall.to_csv(csv_filename, index=False,encoding='utf-8')
     
     print()
     print()
@@ -263,10 +387,14 @@ def main():
     # Sort by ratio of Zlib entropy and XL perplexity
     metric = scores["zlib"] / np.log(scores["XL"])
     print(f"======== top sample by ratio of Zlib entropy and XL perplexity: ========")
-    zlib_result = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"],args.best_n)
+    zlib_result, zlib_result_overall = print_best(metric, generated_samples_clean, "PPL-XL", scores["XL"], "Zlib", scores["zlib"],args.best_n,args.N)
     df_zlib = pd.DataFrame(zlib_result)
-    csv_filename = 'zlib_all_samples_scores_2.csv'
+    csv_filename = f'{args.text_len}_zlib_best_samples_scores.csv'
     df_zlib.to_csv(csv_filename, index=False,encoding='utf-8')
+
+    df_zlib_overall = pd.DataFrame(zlib_result_overall)
+    csv_filename = f'{args.text_len}_zlib_best_samples_scores_overall.csv'
+    df_zlib_overall.to_csv(csv_filename, index=False,encoding='utf-8')
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
@@ -277,6 +405,9 @@ def parse_arguments(argv):
     parser.add_argument('--window_size', type=int, default=50, help="the size of sliding window")
     parser.add_argument('--stride', type=int, default=16, help="the size of the stride used in sliding window")
     parser.add_argument('--best_n', type=int, default=20, help="the best n samples")
+    parser.add_argument('--text_len', type=int, default=256, help="the length of generated samples")
+    parser.add_argument('--wet_file', type=str, default=None, help="the CC dataset file name for conditioning")
+    
     return parser.parse_args(argv)
 
 if __name__ == '__main__':
